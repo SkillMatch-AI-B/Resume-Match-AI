@@ -1,16 +1,14 @@
 import sqlite3
 import os
 
-# Ensure the database is created in the same directory as this script
 DB_DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.path.join(DB_DIR, "app.db")
 
 def create_database():
-    """Initializes the SQLite database and creates all necessary tables for Project 2."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # 1. Users Table (Stores authentication and roles)
+    # 1. Users Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -21,7 +19,7 @@ def create_database():
         )
     ''')
 
-    # 2. Jobs Table (Allows Recruiters to create distinct Job Campaigns)
+    # 2. Jobs Table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,21 +31,23 @@ def create_database():
         )
     ''')
 
-    # 3. Reports Table (Stores history for Job Seekers)
+    # 3. Reports Table (JOB SEEKER - Has content_hash and resume_name)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS reports (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            resume_name TEXT DEFAULT 'Unknown',
             job_title TEXT NOT NULL,
             match_score REAL NOT NULL,
             missing_skills TEXT,
             ai_feedback TEXT,
+            content_hash TEXT DEFAULT 'none',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users (id)
         )
     ''')
 
-    # 4. Candidates Table (Stores bulk-uploaded resumes tied to a specific Recruiter's Job)
+    # 4. Candidates Table (RECRUITER - Kept standard, NO hash)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS candidates (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,8 +62,6 @@ def create_database():
 
     conn.commit()
     conn.close()
-    print("Database architecture initialized successfully.")
 
 if __name__ == "__main__":
-    # Running this file directly will generate the app.db file
     create_database()

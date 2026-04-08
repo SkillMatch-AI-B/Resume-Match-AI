@@ -1,65 +1,55 @@
-import PyPDF2
+import pdfplumber
 import docx
+import os
 import re
 
-def clean_text(raw_text):
-    """
-    Strips out weird hidden characters, corrupted symbols, 
-    and normalizes spacing so the AI can actually read it.
-    """
-    if not raw_text:
-        return ""
-    # Remove non-ASCII characters (often caused by bad fonts or icons)
-    text = re.sub(r'[^\x00-\x7F]+', ' ', raw_text)
-    # Replace multiple spaces, tabs, or newlines with a single space
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+# def clean_text(raw_text):
+#     """
+#     Strips out weird hidden characters, corrupted symbols, 
+#     and normalizes spacing so the AI can actually read it.
+#     """
+#     if not raw_text:
+#         return ""
+#     # Remove non-ASCII characters (often caused by bad fonts or icons)
+#     text = re.sub(r'[^\x00-\x7F]+', ' ', raw_text)
+#     # Replace multiple spaces, tabs, or newlines with a single space
+#     text = re.sub(r'\s+', ' ', text)
+#     return text.strip()
 
-def parse_resume(file_obj):
-    """
-    Extracts text from PDF, DOCX, or TXT files.
-    Includes heavy-duty error handling for corrupted files.
-    """
-    filename = file_obj.name.lower()
-    extracted_text = ""
-
+def parse_resume(file):
+    """Extracts text from PDF, DOCX, or TXT files, including tables."""
+    text = ""
     try:
-        if filename.endswith('.pdf'):
-            # Read PDF
-            pdf_reader = PyPDF2.PdfReader(file_obj)
-            for page in pdf_reader.pages:
-                text = page.extract_text()
-                if text:
-                    extracted_text += text + " "
-                    
-        elif filename.endswith('.docx'):
-            # Read DOCX
-            try:
-                doc = docx.Document(file_obj)
-                for para in doc.paragraphs:
-                    extracted_text += para.text + " "
-            except Exception as docx_error:
-                return f"Error: DOCX file formatting is corrupted or unreadable. ({str(docx_error)})"
-                
-        elif filename.endswith('.txt'):
-            # Read TXT (try standard UTF-8, fallback to Latin-1 if it has weird characters)
-            try:
-                extracted_text = file_obj.read().decode('utf-8')
-            except UnicodeDecodeError:
-                file_obj.seek(0)
-                extracted_text = file_obj.read().decode('latin-1')
-        else:
-            return "Error: Unsupported file format. Please upload a PDF, DOCX, or TXT file."
+        file_extension = os.path.splitext(file.name)[1].lower()
 
-        # Pass it through our scrubber
-        final_text = clean_text(extracted_text)
-        
-        # Check if the file was just a scanned image with no highlightable text
-        if not final_text or len(final_text) < 10:
-            return "Error: Document appears to be empty or an unreadable scanned image."
+        if file_extension == '.pdf':
+            with pdfplumber.open(file) as pdf:
+                for page in pdf.pages:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+
+        elif file_extension == '.docx':
+            doc = docx.Document(file)
             
-        return final_text
+            # 1. Read standard paragraphs
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+            
+            # 2. Read text inside tables (CRUCIAL for this resume)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        text += cell.text + " "
+                    text += "\n"
+
+        elif file_extension == '.txt':
+            text = file.read().decode("utf-8")
+
+        if not text.strip():
+            return "Error: The file is empty or could not be read."
+
+        return text.strip()
 
     except Exception as e:
-        # Catch-all for password-protected or totally broken files
-        return f"Error: Could not safely read the file. ({str(e)})"
+        return f"Error: {str(e)}"

@@ -1,101 +1,94 @@
-from dotenv import load_dotenv
-from google import genai
 import os
+import time
+import json
+import re
+from dotenv import load_dotenv
+from groq import Groq
 
-# Load the variables from the .env file
-load_dotenv()
-# Put your real API key from Google AI Studio here
-GEMINI_API_KEY = "AIzaSyCIbq8cmqH8RV5ZF21h5hyGb9WJ9Viw3Ac" 
+# Load the freshest API key
+load_dotenv(override=True)
 
-def setup_gemini_client():
-    # Retrieve the key from the environment
-    api_key = os.getenv("GEMINI_API_KEY")
+def setup_groq_client():
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        print("Error: API Key not found. Check your .env file.")
+        print("Error: GROQ_API_KEY not found. Check your .env file.")
         return None
-    client = genai.Client(api_key=api_key)
-    return client
+    return Groq(api_key=api_key)
 
-def generate_custom_feedback(job_title, match_score, missing_skills):
-    """
-    Generates personalized, constructive feedback for the job seeker based on their score.
-    """
-    client = setup_gemini_client()
-    if not client:
-        return "Generative AI is not configured. Please add your API key."
+def generate_custom_feedback(job_title, match_score, missing_skills, resume_text, jd_text):
+    client = setup_groq_client()
+    if not client: return "Generative AI is not configured."
 
     prompt = f"""
-    You are an expert tech recruiter. A candidate applied for a '{job_title}' role.
-    Their resume scored a {match_score}% match against the job description.
-    They are missing the following key skills: {missing_skills}.
-    
-    Write a short, encouraging 3-sentence paragraph advising them on what to focus on learning next to improve their chances for this specific role. Do not use generic filler.
+    You are a technical career coach. Give direct feedback to a candidate applying for '{job_title}'.
+    RESUME:\n{resume_text}\n
+    MISSING SKILLS: {missing_skills}\n
+    TASK: Write a 3-sentence feedback paragraph. 
+    1. First sentence MUST name a specific company/project from their resume. 
+    2. Second sentence MUST connect existing experience to MISSING SKILLS.
     """
-    
     try:
-        # Using the new SDK syntax and the fast flash model
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile", 
         )
-        return response.text
+        return chat_completion.choices[0].message.content
     except Exception as e:
         return f"Could not generate AI feedback at this time. (Error: {str(e)})"
 
-def generate_interview_questions(job_title, missing_skills):
-    """
-    Generates 3 technical interview questions targeting the candidate's weak points.
-    """
-    client = setup_gemini_client()
-    if not client:
-        return "Generative AI is not configured."
-
-    if not missing_skills or missing_skills == "None! Perfect skill match.":
-        return "Candidate has all required skills! Ask advanced architectural questions."
-
-    prompt = f"""
-    You are an expert interviewer hiring a '{job_title}'. 
-    The candidate's resume did NOT mention these required skills: {missing_skills}.
-    
-    Generate exactly 3 technical interview questions to test if they actually know these missing skills, or to see how they would approach learning them. Keep the questions direct and professional. Number them 1, 2, 3.
-    """
-    
-    try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        return response.text
-    except Exception as e:
-        return f"Could not generate questions at this time. (Error: {str(e)})"
-        
 def analyze_missing_skills(resume_text, jd_text):
-    """Uses Gemini to dynamically find missing skills without needing a manual database."""
-    client = setup_gemini_client()
-    if not client:
-        return "Generative AI is not configured."
+    client = setup_groq_client()
+    if not client: return "Generative AI is not configured."
 
     prompt = f"""
-    Act as an expert technical recruiter. 
-    Compare this Job Description to this Candidate's Resume.
-    
-    Job Description:
-    {jd_text}
-    
-    Candidate Resume:
-    {resume_text}
-    
-    Identify the top 3 to 5 critical technical skills, tools, or requirements from the Job Description that are completely MISSING from the resume. 
-    Return ONLY a comma-separated list of the missing skills. Do not write a paragraph. 
-    If the candidate truly has everything, return "None! Perfect skill match."
+    Compare JD to Resume. JD:\n{jd_text}\nResume:\n{resume_text}
+    Identify top 3-5 critical technical skills MISSING from the resume. Return ONLY a comma-separated list.
     """
-    
     try:
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
         )
-        # Strip out any weird formatting or newlines the AI might add
-        return response.text.replace('\n', '').strip()
+        return chat_completion.choices[0].message.content.replace('\n', '').strip()
     except Exception as e:
-        return f"Error extracting skills: {str(e)}"        
+        return f"Error extracting skills: {str(e)}"
+
+# ==========================================
+# RESUME RESTRUCTURING LOGIC (NOW RETURNS JSON)
+# ==========================================
+def rewrite_resume(resume_text, missing_skills, job_title):
+    client = setup_groq_client()
+    if not client: return None
+
+    prompt = f"""
+    Rewrite the following resume for a '{job_title}' role. Format it professionally.
+    RESUME:\n{resume_text}\n
+    
+    You MUST return the output strictly as a JSON object with the following exact keys. Do not add markdown codeblocks. Just the raw JSON.
+    {{
+        "name": "Candidate Full Name",
+        "contact": "Email | Phone | LinkedIn",
+        "summary": "Professional summary paragraph",
+        "skills": "Bullet points of skills. Leave empty string if none.",
+        "experience": "Bullet points of experience. Leave empty string if none.",
+        "projects": "Bullet points of projects. Leave empty string if none.",
+        "education": "Education details.",
+        "certifications": "Certifications. Leave empty string if none."
+    }}
+    """
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile", 
+        )
+        response_text = chat_completion.choices[0].message.content
+        
+        # Safely extract JSON even if AI adds formatting
+        match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        return json.loads(response_text)
+    except Exception as e:
+        print("Error parsing JSON:", e)
+        # Fallback structure
+        return {"name": "Error Generating Resume", "contact": "", "summary": str(e), "skills": "", "experience": "", "projects": "", "education": "", "certifications": ""}
